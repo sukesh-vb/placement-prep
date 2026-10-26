@@ -1,0 +1,368 @@
+// Prisma schema for PlacementPrep
+// Production-quality relational schema for engineering placement preparation & tracking
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// CORE ENTITIES
+// -----------------------------------------------------------------------------
+
+model Branch {
+  id          String   @id @default(cuid())
+  code        String   @unique // e.g. "CSE", "MECH", "BIOTECH", "CHEM", "ECE"
+  name        String   // e.g. "Computer Science & Engineering"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  students         Student[]
+  companyBranches  CompanyBranch[]
+  companyRoles     CompanyRole[]
+  companySkills    CompanySkill[]
+  roadmapTemplates RoadmapTemplate[]
+  milestones       Milestone[]
+  projectTemplates ProjectTemplate[]
+  interviewQuestions InterviewQuestion[]
+
+  @@map("branches")
+}
+
+model Student {
+  id               String   @id @default(cuid())
+  name             String
+  email            String   @unique
+  passwordHash     String
+  branchId         String
+  currentYear      Int      @default(3) // 1 - 4
+  currentSemester  Int      @default(5) // 1 - 8
+  cgpa             Float?
+  standingArrears  Int?     @default(0)
+  targetBucketPref String?  @default("BALANCED") // e.g. "BALANCED", "REACH_HEAVY", "TARGET_FOCUSED"
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  branch            Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  skills            StudentSkill[]
+  targetCompanies   StudentTargetCompany[]
+  milestoneProgress StudentMilestoneProgress[]
+  codingProblemLogs CodingProblemLog[]
+  projects          StudentProject[]
+
+  @@index([branchId])
+  @@map("students")
+}
+
+model Company {
+  id                    String   @id @default(cuid())
+  name                  String   @unique
+  logoUrl               String?
+  website               String?
+  hqNotes               String?
+  historicalHiringCount Int?     // Extracted from source data (e.g. TCS: 1116, Amazon: 601)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  companyBranches    CompanyBranch[]
+  companySectors     CompanySector[]
+  companyRoles       CompanyRole[]
+  companySkills      CompanySkill[]
+  targetStudents     StudentTargetCompany[]
+  interviewQuestions InterviewQuestion[]
+
+  @@map("companies")
+}
+
+model Sector {
+  id          String   @id @default(cuid())
+  name        String   @unique // e.g. "Global Product & Big Tech", "FinTech & Banking Tech"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companySectors CompanySector[]
+
+  @@map("sectors")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  title       String   @unique // e.g. "Software Development Engineer (SDE)", "Graduate Engineer Trainee"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companyRoles CompanyRole[]
+  roleSkills   RoleSkill[]
+
+  @@map("roles")
+}
+
+model Skill {
+  id          String   @id @default(cuid())
+  name        String   @unique // e.g. "Data Structures & Algorithms", "Aspen Plus / HYSYS"
+  category    String   // "Programming", "DSA", "Core CS", "Web/Dev", "Database", "Aptitude", "Domain-Core", "Simulation/CAD", "Soft Skills", "Analytics", "Embedded & VLSI"
+  description String?
+  resources   String?  // JSON string array of { title, url, type }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roleSkills         RoleSkill[]
+  companySkills      CompanySkill[]
+  studentSkills      StudentSkill[]
+  milestones         Milestone[]
+  interviewQuestions InterviewQuestion[]
+
+  @@index([category])
+  @@map("skills")
+}
+
+// -----------------------------------------------------------------------------
+// ASSOCIATION / MANY-TO-MANY TABLES
+// -----------------------------------------------------------------------------
+
+model CompanyBranch {
+  id               String   @id @default(cuid())
+  companyId        String
+  branchId         String
+  tier             String   // "REACH" | "TARGET" | "SAFETY"
+  tierSource       String   @default("EXPLICIT") // "EXPLICIT" | "INFERRED"
+  eligibilityNotes String?
+  minCgpa          Float?
+  arrearsAllowed   Int?     @default(0)
+  createdAt        DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, branchId])
+  @@index([branchId, tier])
+  @@map("company_branches")
+}
+
+model CompanySector {
+  id        String   @id @default(cuid())
+  companyId String
+  sectorId  String
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sector  Sector  @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, sectorId])
+  @@index([sectorId])
+  @@map("company_sectors")
+}
+
+model CompanyRole {
+  id             String   @id @default(cuid())
+  companyId      String
+  roleId         String
+  branchId       String
+  selectionNotes String?
+  createdAt      DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  role    Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, roleId, branchId])
+  @@index([branchId])
+  @@map("company_roles")
+}
+
+model RoleSkill {
+  id         String   @id @default(cuid())
+  roleId     String
+  skillId    String
+  importance String   @default("MUST_HAVE") // "MUST_HAVE" | "GOOD_TO_HAVE"
+  weight     Float    @default(1.0)
+  createdAt  DateTime @default(now())
+
+  role  Role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, skillId])
+  @@index([skillId])
+  @@map("role_skills")
+}
+
+model CompanySkill {
+  id        String   @id @default(cuid())
+  companyId String
+  skillId   String
+  branchId  String
+  priority  String   @default("HIGH") // "HIGH" | "MEDIUM" | "LOW"
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, skillId, branchId])
+  @@index([branchId, priority])
+  @@map("company_skills")
+}
+
+model StudentSkill {
+  id          String   @id @default(cuid())
+  studentId   String
+  skillId     String
+  proficiency String   @default("NOT_STARTED") // "NOT_STARTED" | "LEARNING" | "COMFORTABLE" | "STRONG"
+  updatedAt   DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, skillId])
+  @@index([studentId])
+  @@map("student_skills")
+}
+
+model StudentTargetCompany {
+  id        String   @id @default(cuid())
+  studentId String
+  companyId String
+  status    String   @default("SAVED") // "SAVED" | "PREPARING" | "APPLIED" | "INTERVIEWING" | "OFFER" | "REJECTED"
+  notes     String?
+  updatedAt DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, companyId])
+  @@index([studentId, status])
+  @@map("student_target_companies")
+}
+
+// -----------------------------------------------------------------------------
+// PROGRESS TRACKING TABLES
+// -----------------------------------------------------------------------------
+
+model RoadmapTemplate {
+  id          String   @id @default(cuid())
+  branchId    String
+  year        Int      // 1 - 4
+  semester    Int      // 1 - 8
+  title       String
+  description String?
+  createdAt   DateTime @default(now())
+
+  branch     Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  milestones Milestone[]
+
+  @@unique([branchId, year, semester])
+  @@map("roadmap_templates")
+}
+
+model Milestone {
+  id                String   @id @default(cuid())
+  roadmapTemplateId String?
+  branchId          String
+  type              String   // "CHECKLIST_ITEM" | "PROJECT" | "CODING_TARGET" | "CERTIFICATION" | "EXAM_PREP"
+  title             String
+  description       String?
+  order             Int      @default(0)
+  targetCount       Int?     // For countable milestones (e.g. 150 problems)
+  skillId           String?
+  createdAt         DateTime @default(now())
+
+  roadmapTemplate RoadmapTemplate?           @relation(fields: [roadmapTemplateId], references: [id], onDelete: SetNull)
+  branch          Branch                     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  skill           Skill?                     @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  studentProgress StudentMilestoneProgress[]
+
+  @@index([branchId, type])
+  @@map("milestones")
+}
+
+model StudentMilestoneProgress {
+  id           String    @id @default(cuid())
+  studentId    String
+  milestoneId  String
+  status       String    @default("TODO") // "TODO" | "IN_PROGRESS" | "DONE"
+  currentCount Int       @default(0)
+  completedAt  DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  student   Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  milestone Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, milestoneId])
+  @@index([studentId, status])
+  @@map("student_milestone_progress")
+}
+
+model CodingProblemLog {
+  id         String   @id @default(cuid())
+  studentId  String
+  topic      String   // "Arrays", "Strings", "Trees", "Graphs", "DP", "SQL", etc.
+  difficulty String   // "EASY" | "MEDIUM" | "HARD"
+  platform   String?  // "LeetCode", "HackerRank", "CodeChef", "GFG", "Other"
+  solvedOn   DateTime @default(now())
+  count      Int      @default(1)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, solvedOn])
+  @@map("coding_problem_logs")
+}
+
+model ProjectTemplate {
+  id             String   @id @default(cuid())
+  branchId       String
+  title          String
+  description    String
+  techSkills     String?  // e.g. "React, Node.js, PostgreSQL" or "Aspen Plus, MATLAB"
+  checklistSteps String   // JSON array string of step strings e.g. ["Requirement & architecture", "Implementation", "Deployment & README"]
+  createdAt      DateTime @default(now())
+
+  branch          Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentProjects StudentProject[]
+
+  @@index([branchId])
+  @@map("project_templates")
+}
+
+model StudentProject {
+  id                String   @id @default(cuid())
+  studentId         String
+  projectTemplateId String?
+  title             String
+  status            String   @default("NOT_STARTED") // "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"
+  repoLink          String?
+  demoLink          String?
+  stepsCompleted    String   @default("[]") // JSON array string of completed step indices e.g. "[0, 1]"
+  updatedAt         DateTime @updatedAt
+
+  student         Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  projectTemplate ProjectTemplate? @relation(fields: [projectTemplateId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@map("student_projects")
+}
+
+model InterviewQuestion {
+  id          String   @id @default(cuid())
+  companyId   String?
+  skillId     String?
+  branchId    String?
+  topic       String   // e.g. "Programming & coding", "DBMS & SQL", "OS & Networks"
+  question    String
+  answerGuide String?
+  createdAt   DateTime @default(now())
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  skill   Skill?   @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  branch  Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([topic])
+  @@index([branchId])
+  @@map("interview_questions")
+}
